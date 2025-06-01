@@ -37,9 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const searchTerm = this.value.trim();
         if (searchTerm.length > 2 || searchTerm.length === 0) {
             currentPage = 1;
-            
             currentSearchTerm = searchTerm;
-            
             fetchLogs(currentCategory, currentPage, searchTerm);
         }
     }, 500));
@@ -89,7 +87,6 @@ async function fetchCategories() {
                 document.getElementById('search-input').value = '';
                 
                 fetchLogs(category, currentPage, '');
-                
                 setupRealTimeUpdates(category);
             });
             
@@ -141,22 +138,14 @@ async function fetchSchema(category) {
         const response = await fetch(`/api/schema/${category}`);
         const data = await response.json();
         
-        logFields = data.fields.filter(field => 
-            !field.match(/^\d+$/) && 
-            field !== "_id"     
-        );
+        const isCpuUsage = category === "cpu_usage";
         
-        if (category === "cpu_usage") {
-            const numericFields = data.fields.filter(field => field.match(/^\d+$/));
-            const maxNumericField = numericFields.length > 0 
-                ? Math.max(...numericFields.map(f => parseInt(f))) 
-                : 9;
-            
-            for (let i = 0; i <= maxNumericField; i++) {
-                if (!logFields.includes(i.toString())) {
-                    logFields.push(i.toString());
-                }
-            }
+        if (isCpuUsage) {
+            logFields = ['topic', 'hostname', 'type', 'timestamp', 'process'];
+        } else {
+            logFields = data.fields.filter(field => 
+                !field.match(/^\d+$/) && field !== "_id"
+            );
         }
         
         const headers = document.getElementById('log-headers');
@@ -173,6 +162,22 @@ async function fetchSchema(category) {
 }
 
 function formatFieldName(field) {
+    if (field === 'process') {
+        return 'Process';
+    }
+    if (field === 'topic') {
+        return 'Topic';
+    }
+    if (field === 'hostname') {
+        return 'Hostname';
+    }
+    if (field === 'type') {
+        return 'Type';
+    }
+    if (field === 'timestamp') {
+        return 'Timestamp';
+    }
+    
     if (field.match(/^\d+$/)) {
         return field;
     }
@@ -193,18 +198,43 @@ function updateLogsTable(logs) {
     logData.innerHTML = '';
     
     logs.forEach(log => {
-        const row = document.createElement('tr');
-        row.className = 'log-row';
-        row.dataset.id = log._id;
+        const isCpuUsage = log.type === "cpu_usage" || currentCategory === "cpu_usage";
         
-        const isCpuUsage = log.type === "cpu_usage" || log.type === "cpu_usage";
-        
-        logFields.forEach(field => {
-            const td = document.createElement('td');
+        if (isCpuUsage) {
+            const row = document.createElement('tr');
+            row.className = 'log-row';
+            row.dataset.id = log._id;
             
-            let value = log[field];
+            const topicCell = document.createElement('td');
+            topicCell.textContent = log.topic || 'log-cpu-usage';
+            row.appendChild(topicCell);
             
-            if (isCpuUsage && field.match(/^\d+$/)) {
+            const hostnameCell = document.createElement('td');
+            hostnameCell.textContent = log.hostname || 'pc-1';
+            row.appendChild(hostnameCell);
+            
+            const typeCell = document.createElement('td');
+            typeCell.textContent = log.type || 'cpu_usage';
+            row.appendChild(typeCell);
+            
+            const timestampCell = document.createElement('td');
+            timestampCell.textContent = log.timestamp ? formatTimestamp(log.timestamp) : '';
+            row.appendChild(timestampCell);
+            
+            const processCell = document.createElement('td');
+            processCell.style.whiteSpace = 'pre-wrap';
+            processCell.style.fontFamily = 'monospace';
+            processCell.style.fontSize = '12px';
+            processCell.style.maxWidth = '400px';
+            processCell.style.wordWrap = 'break-word';
+            
+            let processText = '';
+            let processCount = 1;
+            
+            const processFields = Object.keys(log).filter(key => key.match(/^\d+$/)).sort((a, b) => parseInt(a) - parseInt(b));
+            
+            processFields.forEach(field => {
+                const value = log[field];
                 if (value) {
                     try {
                         let processInfo;
@@ -225,38 +255,51 @@ function updateLogsTable(logs) {
                                 ? processInfo.cpu_usage.toFixed(2) + '%' 
                                 : (processInfo.cpu_usage || 'N/A');
                             
-                            td.textContent = `{"pid":${pid},"comm":"${comm}","cpu_usage":${usage}}`;
-                        } else {
-                            td.textContent = value;
+                            processText += `${processCount}. PID: ${pid}, Command: ${comm}, CPU: ${usage}\n`;
+                            processCount++;
                         }
                     } catch (error) {
                         console.error('Error formatting process info:', error);
-                        td.textContent = value;
                     }
-                } else {
-                    td.textContent = '';
                 }
+            });
+            
+            processCell.textContent = processText.trim() || 'No process data';
+            row.appendChild(processCell);
+            
+            row.addEventListener('click', () => {
+                showLogDetails(log._id);
+            });
+            
+            logData.appendChild(row);
+        } else {
+            const row = document.createElement('tr');
+            row.className = 'log-row';
+            row.dataset.id = log._id;
+            
+            logFields.forEach(field => {
+                const td = document.createElement('td');
+                
+                let value = log[field];
+                
+                if (field === 'timestamp' && typeof value === 'number') {
+                    value = formatTimestamp(value);
+                }
+                
+                if (typeof value === 'object' && value !== null) {
+                    value = JSON.stringify(value).substring(0, 50) + '...';
+                }
+                
+                td.textContent = value === undefined ? '' : value;
                 row.appendChild(td);
-                return;
-            }
+            });
             
-            if (field === 'timestamp' && typeof value === 'number') {
-                value = formatTimestamp(value);
-            }
+            row.addEventListener('click', () => {
+                showLogDetails(log._id);
+            });
             
-            if (typeof value === 'object' && value !== null) {
-                value = JSON.stringify(value).substring(0, 50) + '...';
-            }
-            
-            td.textContent = value === undefined ? '' : value;
-            row.appendChild(td);
-        });
-        
-        row.addEventListener('click', () => {
-            showLogDetails(log._id);
-        });
-        
-        logData.appendChild(row);
+            logData.appendChild(row);
+        }
     });
 }
 
@@ -382,4 +425,3 @@ function setupSSEConnection(category) {
         }, 5000);
     };
 }
-        
